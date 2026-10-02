@@ -3,8 +3,9 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-09-29T17:02:19-0300"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T15:23:24-0300"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T17:11:36-0300"
   docs/decisions/technical-decisions-next-frontend-openapi-typing.md: "2026-09-29T17:02:19-0300"
+  docs/decisions/technical-decisions-next-frontend-msw-foundation.md: "2026-09-29T17:02:19-0300"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-09-29T17:02:19-0300"
   docs/decisions/technical-decisions-next-frontend-config-base.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-01-configuracao-base/context.md: "2026-09-29T17:02:19-0300"
@@ -12,6 +13,7 @@ sources_mtime:
   docs/phases/phase-02-auth-frontend/context.md: "2026-09-29T17:02:19-0300"
   .claude/skills/testing-guide-nestjs-project/SKILL.md: "2026-09-29T17:02:19-0300"
   .claude/skills/testing-guide-next-frontend/SKILL.md: "2026-09-29T17:02:19-0300"
+  docs/phases/phase-03-videos/library-refs.md: "2026-10-02T18:03:09-0300"
 ---
 
 # phase-03-videos — Context
@@ -51,15 +53,15 @@ sources_mtime:
 
 | Ref | Source | Scope | Topic | Status | Decision | Libraries |
 |-----|--------|-------|-------|--------|----------|-----------|
-| phase-03-videos/TD-01 | phase | Backend | Object Storage Backend & SDK | decided | A — `@aws-sdk/client-s3` + MinIO | — |
-| phase-03-videos/TD-02 | phase | Cross-layer | Upload Protocol & Resumability | decided | A — tus protocol (`@tus/server`/`@tus/s3-store`/`tus-js-client`) | — |
-| phase-03-videos/TD-03 | phase | Cross-layer | Draft Video Pre-registration Flow | decided | B — REST endpoint before upload | — |
-| phase-03-videos/TD-04 | phase | Backend | Background Job Queue Technology | decided | B — pg-boss (over PostgreSQL) | — |
-| phase-03-videos/TD-05 | phase | Repo-wide | Video Worker Subproject Placement & Compose Topology | decided | B — entrypoint inside `nestjs-project/` | — |
-| phase-03-videos/TD-06 | phase | Backend | Video Processing / FFmpeg Invocation Approach | decided | A — direct binary invocation via `execa` | — |
-| phase-03-videos/TD-07 | phase | Cross-layer | Streaming & Download Delivery Mechanism | decided | A — presigned GET URLs direct from storage | — |
-| phase-03-videos/TD-08 | phase | Backend | Object Storage Key Strategy & Uniqueness Guarantee | decided | A — flat key based on video UUID | — |
-| phase-03-videos/TD-09 | phase | Backend | Video Processing Status Lifecycle & Failure Handling | decided | A — granular enum + pg-boss retry/backoff/DLQ | — |
+| phase-03-videos/TD-01 | phase | Backend | Object Storage Backend & SDK | decided | A | @aws-sdk/client-s3, @aws-sdk/lib-storage, @aws-sdk/s3-request-presigner |
+| phase-03-videos/TD-02 | phase | Cross-layer | Upload Protocol & Resumability | decided | A | @tus/server, @tus/s3-store, tus-js-client |
+| phase-03-videos/TD-03 | phase | Cross-layer | Draft Video Pre-registration Flow | decided | B | — |
+| phase-03-videos/TD-04 | phase | Backend | Background Job Queue Technology | decided | B | pg-boss |
+| phase-03-videos/TD-05 | phase | Repo-wide | Video Worker Subproject Placement & Compose Topology | decided | B | — |
+| phase-03-videos/TD-06 | phase | Backend | Video Processing / FFmpeg Invocation Approach | decided | A | execa |
+| phase-03-videos/TD-07 | phase | Cross-layer | Streaming & Download Delivery Mechanism | decided | A | @aws-sdk/s3-request-presigner |
+| phase-03-videos/TD-08 | phase | Backend | Object Storage Key Strategy & Uniqueness Guarantee | decided | A | — |
+| phase-03-videos/TD-09 | phase | Backend | Video Processing Status Lifecycle & Failure Handling | decided | A | pg-boss |
 
 _Source files:_
 
@@ -86,12 +88,12 @@ _All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 ### phase-03-videos/TD-01
 
 **Recommendation:** MinIO local + `@aws-sdk/client-s3`/`lib-storage`/`s3-request-presigner`. É o único caminho que atende ao "Object Storage: S3 or MinIO" do diagrama de arquitetura sem duplicar código de integração entre dev e produção: o mesmo cliente e os mesmos comandos funcionam contra MinIO local e contra AWS S3 real, trocando apenas `endpoint`/credenciais via env — consistente com o padrão de configuração namespaced já estabelecido na Fase 01.
-**Libraries:** —
+**Libraries:** @aws-sdk/client-s3, @aws-sdk/lib-storage, @aws-sdk/s3-request-presigner
 
 ### phase-03-videos/TD-02
 
 **Recommendation:** É a única opção que resolve resumabilidade como propriedade nativa do protocolo em vez de responsabilidade customizada, que é exatamente o requisito não-funcional citado nos Pontos de Atenção do projeto. A Option B alcançaria o mesmo resultado, mas exigiria reimplementar manualmente o controle de estado que o tus já resolve.
-**Libraries:** —
+**Libraries:** @tus/server, @tus/s3-store, tus-js-client
 
 ### phase-03-videos/TD-03
 
@@ -101,7 +103,7 @@ _All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 ### phase-03-videos/TD-04
 
 **Recommendation:** O volume de jobs da Fase 03 é simples (um job de processamento por vídeo enviado, sem dependências entre jobs nem necessidade de rate limiting de fila), e o projeto não usa Redis em nenhuma outra parte do stack. pg-boss entrega as garantias necessárias (retry, concorrência segura) reaproveitando o Postgres já provisionado. Se fases futuras exigirem features de fila mais avançadas, a migração para BullMQ pode ser revisitada como uma nova decisão.
-**Libraries:** —
+**Libraries:** pg-boss
 
 ### phase-03-videos/TD-05
 
@@ -111,12 +113,12 @@ _All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 ### phase-03-videos/TD-06
 
 **Recommendation:** Depois do abandono do `fluent-ffmpeg`, apostar em outro wrapper de terceiros de baixíssima adoção (`mediaforge`) repete o mesmo risco que acabou de se materializar. Chamar os binários diretamente com `execa` é mais verboso, mas a superfície de manutenção fica limitada a uma lib de execução de processos genérica que não some do dia para a noite.
-**Libraries:** —
+**Libraries:** execa
 
 ### phase-03-videos/TD-07
 
 **Recommendation:** Segue exatamente a relação `Frontend → Storage` já definida no C4, evita transformar a API num proxy de banda larga para arquivos de até 10GB, e reaproveita o suporte nativo a Range/`Content-Disposition` do storage sem código adicional. A regra de BFF estrito do frontend continua vigente para toda comunicação com a API NestJS — este fluxo é a exceção documentada no próprio diagrama de arquitetura.
-**Libraries:** —
+**Libraries:** @aws-sdk/s3-request-presigner
 
 ### phase-03-videos/TD-08
 
@@ -126,7 +128,7 @@ _All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 ### phase-03-videos/TD-09
 
 **Recommendation:** Aproveita o retry + backoff + DLQ nativos do pg-boss (já decidido em TD-04) sem nenhum código customizado, cobrindo o caso comum de falha transitória sem exigir reupload manual; aceita o custo de artefatos parciais órfãos como aceitável no volume inicial do projeto. Notificação ativa (push/toast) fica fora de escopo nesta fase: o padrão de polling via GET já é o que TD-07 assume para a URL de streaming.
-**Libraries:** —
+**Libraries:** pg-boss
 
 ## Inherited Decisions Detail
 
@@ -262,6 +264,26 @@ _All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 **Recommendation:** Option A (hand-written MSW handlers typed via `paths`) — determinism over auto-generation (BFF integration tests assert on specific values); coherence with TD-01's `paths` type as the single contract anchor; negligible manual cost at this API scale.
 **Libraries:** —
 
+### next-frontend-msw-foundation/TD-01
+
+**Recommendation:** Option B (per-domain modules + barrel) — MSW's own best-practice recommends it; domain ownership tracks the codebase, not the project plan; append-only growth with minimal merge conflicts as each phase adds a file plus one barrel line.
+**Libraries:** —
+
+### next-frontend-msw-foundation/TD-02
+
+**Recommendation:** Option A (test-only, `setupServer` only at the foundation) — the browser worker is a future capability with no documented current consumer; wiring it now is speculative investment.
+**Libraries:** —
+
+### next-frontend-msw-foundation/TD-03
+
+**Recommendation:** Option D (hand-written defaults as the default + opt-in seeded faker for bulk collections) — Option B's determinism is the right baseline for small fixture sets; faker stays available, scoped, for future bulk-collection cases.
+**Libraries:** —
+
+### next-frontend-msw-foundation/TD-04
+
+**Recommendation:** Option A (universal handler set + `server.use(...)` overrides + `onUnhandledRequest: "error"`) — loading all handlers is the canonical MSW v2 model and imposes no cost on tests that don't fetch the extra URLs; `onUnhandledRequest: "error"` enforces phase isolation at test time.
+**Libraries:** —
+
 ### openapi-docs-nestjs/TD-01
 
 **Recommendation:** Option A (`@nestjs/swagger`) — é a única opção que preserva as decisões anteriores (`class-validator` em TD-06 de phase-02-auth) sem re-platform; o CLI plugin com `classValidatorShim: true` aproveita os decoradores `class-validator` existentes para inferir schemas.
@@ -289,7 +311,7 @@ _All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 
 ### next-frontend-config-base/TD-03
 
-**Recommendation:** Option A (Strict BFF — single server-only `API_URL`) — aligned with the BFF testing strategy already documented in `next-frontend/CLAUDE.md`; eliminates CORS and public exposure of the backend URL. Note: for Phase 03+, large video payloads will need object-storage presigned URLs as a separate mechanism — this does not argue for a `NEXT_PUBLIC_API_URL` key (relevant to this phase's TD-07).
+**Recommendation:** Option A (Strict BFF — single server-only `API_URL`) — aligned with the BFF testing strategy already documented in `next-frontend/CLAUDE.md`; eliminates CORS and public exposure of the backend URL.
 **Libraries:** —
 
 ## Inherited Conventions
