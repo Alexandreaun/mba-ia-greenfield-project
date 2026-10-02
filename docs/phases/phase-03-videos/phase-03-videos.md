@@ -3,15 +3,16 @@ kind: phase
 name: phase-03-videos
 test_specs_aware: true
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-10-02T15:37:21-0300"
+  docs/phases/phase-03-videos/context.md: "2026-10-02T18:11:10-0300"
   docs/project-plan.md: "2026-09-29T17:02:19-0300"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T15:23:24-0300"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T18:11:10-0300"
   docs/decisions/technical-decisions-next-frontend-openapi-typing.md: "2026-09-29T17:02:19-0300"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-09-29T17:02:19-0300"
   docs/decisions/technical-decisions-next-frontend-config-base.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-01-configuracao-base/context.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-02-auth/context.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-02-auth-frontend/context.md: "2026-09-29T17:02:19-0300"
+  docs/phases/phase-03-videos/library-refs.md: "2026-10-02T18:11:10-0300"
   .claude/skills/testing-guide-nestjs-project/SKILL.md: "2026-09-29T17:02:19-0300"
   .claude/skills/testing-guide-next-frontend/SKILL.md: "2026-09-29T17:02:19-0300"
 ---
@@ -418,8 +419,6 @@ _Videos are not yet publishable in this phase (visibility/publication ships in P
 **Delivery semantics:** at-least-once — pg-boss (per `phase-03-videos/TD-04`) retries with exponential backoff (`retryLimit`, `retryBackoff`) and routes to a dead-letter queue once retries are exhausted; `Video.status` flips to `"ready"` on success or `"failed"` on dead-letter (per `phase-03-videos/TD-09`)
 
 ---
-
-<!-- phase-a-complete -->
 
 ## Dependency Map
 
