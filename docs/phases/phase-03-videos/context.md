@@ -3,11 +3,10 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-09-29T17:02:19-0300"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-01T18:32:06-0300"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T15:23:24-0300"
   docs/decisions/technical-decisions-next-frontend-openapi-typing.md: "2026-09-29T17:02:19-0300"
-  docs/decisions/technical-decisions-next-frontend-config-base.md: "2026-09-29T17:02:19-0300"
-  docs/decisions/technical-decisions-next-frontend-msw-foundation.md: "2026-09-29T17:02:19-0300"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-09-29T17:02:19-0300"
+  docs/decisions/technical-decisions-next-frontend-config-base.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-01-configuracao-base/context.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-02-auth/context.md: "2026-09-29T17:02:19-0300"
   docs/phases/phase-02-auth-frontend/context.md: "2026-09-29T17:02:19-0300"
@@ -52,15 +51,15 @@ sources_mtime:
 
 | Ref | Source | Scope | Topic | Status | Decision | Libraries |
 |-----|--------|-------|-------|--------|----------|-----------|
-| phase-03-videos/TD-01 | phase | Backend | Object Storage Backend & SDK | pending | — | — |
-| phase-03-videos/TD-02 | phase | Cross-layer | Upload Protocol & Resumability | pending | — | — |
-| phase-03-videos/TD-03 | phase | Cross-layer | Draft Video Pre-registration Flow | pending | — | — |
-| phase-03-videos/TD-04 | phase | Backend | Background Job Queue Technology | pending | — | — |
-| phase-03-videos/TD-05 | phase | Repo-wide | Video Worker Subproject Placement & Compose Topology | pending | — | — |
-| phase-03-videos/TD-06 | phase | Backend | Video Processing / FFmpeg Invocation Approach | pending | — | — |
-| phase-03-videos/TD-07 | phase | Cross-layer | Streaming & Download Delivery Mechanism | pending | — | — |
-| phase-03-videos/TD-08 | phase | Backend | Object Storage Key Strategy & Uniqueness Guarantee | pending | — | — |
-| phase-03-videos/TD-09 | phase | Backend | Video Processing Status Lifecycle & Failure Handling | pending | — | — |
+| phase-03-videos/TD-01 | phase | Backend | Object Storage Backend & SDK | decided | A — `@aws-sdk/client-s3` + MinIO | — |
+| phase-03-videos/TD-02 | phase | Cross-layer | Upload Protocol & Resumability | decided | A — tus protocol (`@tus/server`/`@tus/s3-store`/`tus-js-client`) | — |
+| phase-03-videos/TD-03 | phase | Cross-layer | Draft Video Pre-registration Flow | decided | B — REST endpoint before upload | — |
+| phase-03-videos/TD-04 | phase | Backend | Background Job Queue Technology | decided | B — pg-boss (over PostgreSQL) | — |
+| phase-03-videos/TD-05 | phase | Repo-wide | Video Worker Subproject Placement & Compose Topology | decided | B — entrypoint inside `nestjs-project/` | — |
+| phase-03-videos/TD-06 | phase | Backend | Video Processing / FFmpeg Invocation Approach | decided | A — direct binary invocation via `execa` | — |
+| phase-03-videos/TD-07 | phase | Cross-layer | Streaming & Download Delivery Mechanism | decided | A — presigned GET URLs direct from storage | — |
+| phase-03-videos/TD-08 | phase | Backend | Object Storage Key Strategy & Uniqueness Guarantee | decided | A — flat key based on video UUID | — |
+| phase-03-videos/TD-09 | phase | Backend | Video Processing Status Lifecycle & Failure Handling | decided | A — granular enum + pg-boss retry/backoff/DLQ | — |
 
 _Source files:_
 
@@ -80,11 +79,54 @@ _Source files:_
 | Reprodução via streaming (sem necessidade de download completo) | phase-03-videos/TD-07 |
 | Download do vídeo pelo usuário | phase-03-videos/TD-07 |
 
-_All 9 capabilities now have at least one covering TD (TD-08 added to close the "URL única" gap; TD-09 added as Transversal coverage for the draft/processing capabilities' failure-handling path)._
+_All 9 capabilities have ≥1 covering TD, and all 9 TDs are decided._
 
 ## Decisions Detail
 
-_No decided TDs yet._
+### phase-03-videos/TD-01
+
+**Recommendation:** MinIO local + `@aws-sdk/client-s3`/`lib-storage`/`s3-request-presigner`. É o único caminho que atende ao "Object Storage: S3 or MinIO" do diagrama de arquitetura sem duplicar código de integração entre dev e produção: o mesmo cliente e os mesmos comandos funcionam contra MinIO local e contra AWS S3 real, trocando apenas `endpoint`/credenciais via env — consistente com o padrão de configuração namespaced já estabelecido na Fase 01.
+**Libraries:** —
+
+### phase-03-videos/TD-02
+
+**Recommendation:** É a única opção que resolve resumabilidade como propriedade nativa do protocolo em vez de responsabilidade customizada, que é exatamente o requisito não-funcional citado nos Pontos de Atenção do projeto. A Option B alcançaria o mesmo resultado, mas exigiria reimplementar manualmente o controle de estado que o tus já resolve.
+**Libraries:** —
+
+### phase-03-videos/TD-03
+
+**Recommendation:** Mantém a criação do rascunho como uma operação de domínio comum (`VideosService.createDraft()`), desacoplada do protocolo de upload escolhido na TD-02. Isso respeita o princípio de responsabilidade única já adotado no projeto (`CLAUDE.md` → Working Principles) e evita que `VideosModule` precise conhecer detalhes do `@tus/server`.
+**Libraries:** —
+
+### phase-03-videos/TD-04
+
+**Recommendation:** O volume de jobs da Fase 03 é simples (um job de processamento por vídeo enviado, sem dependências entre jobs nem necessidade de rate limiting de fila), e o projeto não usa Redis em nenhuma outra parte do stack. pg-boss entrega as garantias necessárias (retry, concorrência segura) reaproveitando o Postgres já provisionado. Se fases futuras exigirem features de fila mais avançadas, a migração para BullMQ pode ser revisitada como uma nova decisão.
+**Libraries:** —
+
+### phase-03-videos/TD-05
+
+**Recommendation:** Dado que o monorepo ainda não decidiu nenhuma ferramenta de workspace para compartilhar código Node entre subprojetos, criar um novo subprojeto físico forçaria duplicar entidades e configuração. Reaproveitar o código e a stack Compose do `nestjs-project` mantém a responsabilidade única no nível de módulo NestJS (um `WorkerModule`/bootstrap dedicado, sem HTTP), sem pagar o custo de duplicação de infraestrutura.
+**Libraries:** —
+
+### phase-03-videos/TD-06
+
+**Recommendation:** Depois do abandono do `fluent-ffmpeg`, apostar em outro wrapper de terceiros de baixíssima adoção (`mediaforge`) repete o mesmo risco que acabou de se materializar. Chamar os binários diretamente com `execa` é mais verboso, mas a superfície de manutenção fica limitada a uma lib de execução de processos genérica que não some do dia para a noite.
+**Libraries:** —
+
+### phase-03-videos/TD-07
+
+**Recommendation:** Segue exatamente a relação `Frontend → Storage` já definida no C4, evita transformar a API num proxy de banda larga para arquivos de até 10GB, e reaproveita o suporte nativo a Range/`Content-Disposition` do storage sem código adicional. A regra de BFF estrito do frontend continua vigente para toda comunicação com a API NestJS — este fluxo é a exceção documentada no próprio diagrama de arquitetura.
+**Libraries:** —
+
+### phase-03-videos/TD-08
+
+**Recommendation:** A garantia de unicidade já existe de graça no UUID v4 que o Postgres gera para `Video.id` em TD-03; usar esse mesmo valor como chave do objeto elimina qualquer decisão adicional de "como evitar colisão" e mantém o cálculo da chave idêntico e trivial em toda camada que precisa dele (upload handler, worker FFmpeg, gerador de URL assinada da TD-07).
+**Libraries:** —
+
+### phase-03-videos/TD-09
+
+**Recommendation:** Aproveita o retry + backoff + DLQ nativos do pg-boss (já decidido em TD-04) sem nenhum código customizado, cobrindo o caso comum de falha transitória sem exigir reupload manual; aceita o custo de artefatos parciais órfãos como aceitável no volume inicial do projeto. Notificação ativa (push/toast) fica fora de escopo nesta fase: o padrão de polling via GET já é o que TD-07 assume para a URL de streaming.
+**Libraries:** —
 
 ## Inherited Decisions Detail
 
@@ -220,41 +262,6 @@ _No decided TDs yet._
 **Recommendation:** Option A (hand-written MSW handlers typed via `paths`) — determinism over auto-generation (BFF integration tests assert on specific values); coherence with TD-01's `paths` type as the single contract anchor; negligible manual cost at this API scale.
 **Libraries:** —
 
-### next-frontend-config-base/TD-01
-
-**Recommendation:** Option A (Zod 4) — Type-inference matches the FE's strict-TS culture; ecosystem gravity in Next.js/React 19 (Server Actions, form resolvers); direct enablement of TD-02 Option A (`@t3-oss/env-nextjs`). Backend parity with Joi is not load-bearing since env schemas are not shared FE↔BE.
-**Libraries:** zod
-
-### next-frontend-config-base/TD-02
-
-**Recommendation:** Option A (`@t3-oss/env-nextjs`) — the only option combining type-level `NEXT_PUBLIC_` prefix enforcement, runtime Proxy-based leak detection, and single-file/single-import-path consumer ergonomics.
-**Libraries:** @t3-oss/env-nextjs
-
-### next-frontend-config-base/TD-03
-
-**Recommendation:** Option A (Strict BFF — single server-only `API_URL`) — aligned with the BFF testing strategy already documented in `next-frontend/CLAUDE.md`; eliminates CORS and public exposure of the backend URL. Note: for Phase 03+, large video payloads will need object-storage presigned URLs as a separate mechanism — this does not argue for a `NEXT_PUBLIC_API_URL` key (relevant to this phase's TD-07).
-**Libraries:** —
-
-### next-frontend-msw-foundation/TD-01
-
-**Recommendation:** Option B (per-domain modules + barrel) — MSW's own best-practice recommends it; domain ownership tracks the codebase, not the project plan; append-only growth with minimal merge conflicts as each phase adds a file plus one barrel line.
-**Libraries:** —
-
-### next-frontend-msw-foundation/TD-02
-
-**Recommendation:** Option A (test-only, `setupServer` only at the foundation) — the browser worker is a future capability with no documented current consumer; wiring it now is speculative investment.
-**Libraries:** —
-
-### next-frontend-msw-foundation/TD-03
-
-**Recommendation:** Option D (hand-written defaults as the default + opt-in seeded faker for bulk collections) — Option B's determinism is the right baseline for small fixture sets; faker stays available, scoped, for future bulk-collection cases (comment threads, video grids).
-**Libraries:** —
-
-### next-frontend-msw-foundation/TD-04
-
-**Recommendation:** Option A (universal handler set + `server.use(...)` overrides + `onUnhandledRequest: "error"`) — loading all handlers is the canonical MSW v2 model and imposes no cost on tests that don't fetch the extra URLs; `onUnhandledRequest: "error"` enforces phase isolation at test time.
-**Libraries:** —
-
 ### openapi-docs-nestjs/TD-01
 
 **Recommendation:** Option A (`@nestjs/swagger`) — é a única opção que preserva as decisões anteriores (`class-validator` em TD-06 de phase-02-auth) sem re-platform; o CLI plugin com `classValidatorShim: true` aproveita os decoradores `class-validator` existentes para inferir schemas.
@@ -268,6 +275,21 @@ _No decided TDs yet._
 ### openapi-docs-nestjs/TD-03
 
 **Recommendation:** Option B (Apenas em dev/staging) — alinha com a postura defensiva já estabelecida na Fase 02; o `openapi.json` commitado em TD-02 cumpre o papel de "spec consultável fora da UI".
+**Libraries:** —
+
+### next-frontend-config-base/TD-01
+
+**Recommendation:** Option A (Zod 4) — Type-inference matches the FE's strict-TS culture; ecosystem gravity in Next.js/React 19 (Server Actions, form resolvers); direct enablement of TD-02 Option A (`@t3-oss/env-nextjs`). Backend parity with Joi is not load-bearing since env schemas are not shared FE↔BE.
+**Libraries:** zod
+
+### next-frontend-config-base/TD-02
+
+**Recommendation:** Option A (`@t3-oss/env-nextjs`) — the only option combining type-level `NEXT_PUBLIC_` prefix enforcement, runtime Proxy-based leak detection, and single-file/single-import-path consumer ergonomics.
+**Libraries:** @t3-oss/env-nextjs
+
+### next-frontend-config-base/TD-03
+
+**Recommendation:** Option A (Strict BFF — single server-only `API_URL`) — aligned with the BFF testing strategy already documented in `next-frontend/CLAUDE.md`; eliminates CORS and public exposure of the backend URL. Note: for Phase 03+, large video payloads will need object-storage presigned URLs as a separate mechanism — this does not argue for a `NEXT_PUBLIC_API_URL` key (relevant to this phase's TD-07).
 **Libraries:** —
 
 ## Inherited Conventions

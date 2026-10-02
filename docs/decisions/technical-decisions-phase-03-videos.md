@@ -1,7 +1,7 @@
 ---
 scope_type: phase
 related_phases: [3]
-status: pending
+status: decided
 date: 2026-09-29
 scope_description: "Upload de vídeos até 10GB, armazenamento de objetos, fila de processamento em segundo plano, extração de metadados/thumbnail via FFmpeg e entrega via streaming/download para a Fase 03."
 ---
@@ -44,7 +44,7 @@ Salvar os arquivos diretamente no filesystem do container da API/worker, sem S3/
 
 **Recommendation:** **Option A** — MinIO local + `@aws-sdk/client-s3`/`lib-storage`/`s3-request-presigner`. É o único caminho que atende ao "Object Storage: S3 or MinIO" do diagrama de arquitetura sem duplicar código de integração entre dev e produção: o mesmo cliente e os mesmos comandos funcionam contra MinIO local e contra AWS S3 real, trocando apenas `endpoint`/credenciais via env — consistente com o padrão de configuração namespaced já estabelecido na Fase 01.
 
-**Decision:** _[pending]_
+**Decision:** A `@aws-sdk/client-s3` (AWS SDK v3) + MinIO local via Docker Compose
 
 ---
 
@@ -75,7 +75,7 @@ Upload tradicional em uma única requisição HTTP, arquivo inteiro no corpo da 
 
 **Recommendation:** **Option A (tus via `@tus/server`/`@tus/s3-store`/`tus-js-client`)** — é a única opção que resolve resumabilidade como propriedade nativa do protocolo em vez de responsabilidade customizada, que é exatamente o requisito não-funcional citado nos Pontos de Atenção do projeto. A Option B alcançaria o mesmo resultado, mas exigiria reimplementar manualmente o controle de estado que o tus já resolve.
 
-**Decision:** _[pending]_
+**Decision:** A Protocolo tus (`@tus/server` + `@tus/s3-store` no backend, `tus-js-client` no frontend)
 
 ---
 
@@ -101,7 +101,7 @@ O frontend chama primeiro `POST /videos` (cria a linha com `status: draft`, reto
 
 **Recommendation:** **Option B** — mantém a criação do rascunho como uma operação de domínio comum (`VideosService.createDraft()`), desacoplada do protocolo de upload escolhido na TD-02. Isso respeita o princípio de responsabilidade única já adotado no projeto (`CLAUDE.md` → Working Principles) e evita que `VideosModule` precise conhecer detalhes do `@tus/server`.
 
-**Decision:** _[pending]_
+**Decision:** B Endpoint REST dedicado antes de iniciar o upload
 
 ---
 
@@ -127,7 +127,7 @@ Fila de jobs que usa o Postgres já existente como armazenamento (via `SKIP LOCK
 
 **Recommendation:** **Option B (pg-boss)** — o volume de jobs da Fase 03 é simples (um job de processamento por vídeo enviado, sem dependências entre jobs nem necessidade de rate limiting de fila), e o projeto não usa Redis em nenhuma outra parte do stack. Adicionar Redis só para a fila introduziria uma peça de infraestrutura nova cujo único consumidor seria esse único fluxo — pg-boss entrega as garantias necessárias (retry, concorrência segura) reaproveitando o Postgres já provisionado. Se fases futuras exigirem features de fila mais avançadas (prioridade complexa, flows), a migração para BullMQ pode ser revisitada como uma nova decisão.
 
-**Decision:** _[pending]_
+**Decision:** B pg-boss (fila sobre PostgreSQL)
 
 ---
 
@@ -153,7 +153,7 @@ O worker vive como um segundo bootstrap dentro do código já existente (`src/wo
 
 **Recommendation:** **Option B** — dado que o monorepo ainda não decidiu nenhuma ferramenta de workspace para compartilhar código Node entre subprojetos, criar um novo subprojeto físico (Option A) forçaria duplicar entidades e configuração ou abriria uma decisão de tooling de monorepo fora do escopo desta fase. Reaproveitar o código e a stack Compose do `nestjs-project` mantém a responsabilidade única no nível de módulo NestJS (um `WorkerModule`/bootstrap dedicado, sem HTTP), sem pagar o custo de duplicação de infraestrutura.
 
-**Decision:** _[pending]_
+**Decision:** B Entrypoint adicional dentro de `nestjs-project/`
 
 ---
 
@@ -179,7 +179,7 @@ Sucessor declarado do `fluent-ffmpeg`, 100% tipado, API fluente, zero bindings n
 
 **Recommendation:** **Option A (`execa` + invocação direta de `ffmpeg`/`ffprobe`)** — depois do abandono do `fluent-ffmpeg`, apostar em outro wrapper de terceiros de baixíssima adoção (`mediaforge`, v0.3.0) repete o mesmo risco que acabou de se materializar. Chamar os binários diretamente com `execa` é mais verboso, mas a superfície de manutenção fica limitada a uma lib de execução de processos genérica (não específica de FFmpeg) que não some do dia para a noite.
 
-**Decision:** _[pending]_
+**Decision:** A Invocação direta do binário via `child_process` (com `execa`)
 
 ---
 
@@ -205,7 +205,7 @@ A API lê o objeto do storage e repassa via stream (`res.pipe()`) para o cliente
 
 **Recommendation:** **Option A** — segue exatamente a relação `Frontend → Storage` já definida no C4 (`docs/diagrams/software-arch.mermaid`), evita transformar a API num proxy de banda larga para arquivos de até 10GB, e reaproveita o suporte nativo a Range/`Content-Disposition` do storage sem código adicional. A regra de BFF estrito do frontend continua vigente para toda comunicação com a API NestJS — este fluxo é a exceção documentada no próprio diagrama de arquitetura, não uma contradição dela.
 
-**Decision:** _[pending]_
+**Decision:** A URLs assinadas (presigned GET) direto do Object Storage
 
 ---
 
@@ -236,7 +236,7 @@ A chave é derivada de um hash do conteúdo binário do vídeo, permitindo dedup
 
 **Recommendation:** **Option A** — a garantia de unicidade já existe de graça no UUID v4 que o Postgres gera para `Video.id` em TD-03; usar esse mesmo valor como chave do objeto elimina qualquer decisão adicional de "como evitar colisão" (matematicamente já é desprezível) e mantém o cálculo da chave idêntico e trivial em toda camada que precisa dele (upload handler, worker FFmpeg, gerador de URL assinada da TD-07). A Option B é uma evolução legítima se políticas de lifecycle por canal se tornarem necessárias — mas introduzir esse acoplamento agora, sem um requisito concreto que o justifique nesta fase, é escopo prematuro.
 
-**Decision:** _[pending]_
+**Decision:** A Chave plana baseada no UUID do vídeo (`{videoId}.{ext}` / `{videoId}-thumbnail.jpg`)
 
 ---
 
@@ -267,7 +267,7 @@ O job de processamento não usa o retry do pg-boss; qualquer erro na primeira te
 
 **Recommendation:** **Option A** — aproveita o retry + backoff + DLQ nativos do pg-boss (já decidido em TD-04) sem nenhum código customizado, cobrindo o caso comum de falha transitória sem exigir reupload manual; aceita o custo de artefatos parciais órfãos como aceitável no volume inicial do projeto, deixando uma rotina de limpeza para uma fase futura de operação/observability caso o volume justifique — a Option B resolve um problema de custo de armazenamento que ainda não existe, antecipando complexidade. Notificação ativa (push/toast) fica fora de escopo nesta fase: a capability do projeto não pede WebSocket/SSE, e o padrão de polling via GET já é o que TD-07 assume para a URL de streaming.
 
-**Decision:** _[pending]_
+**Decision:** A Enum granular + retry automático do pg-boss + DLQ dedicada + artefatos parciais preservados
 
 ---
 
@@ -275,12 +275,12 @@ O job de processamento não usa o retry do pg-boss; qualquer erro na primeira te
 
 | ID | Scope | Decision | Recommendation | Choice |
 |----|-------|----------|---------------|--------|
-| TD-01 | Backend | Object Storage Backend & SDK | A — MinIO + `@aws-sdk/client-s3`/`lib-storage`/`s3-request-presigner` | _[pending]_ |
-| TD-02 | Cross-layer | Upload Protocol & Resumability | A — tus (`@tus/server` + `@tus/s3-store` + `tus-js-client`) | _[pending]_ |
-| TD-03 | Cross-layer | Draft Video Pre-registration Flow | B — Endpoint REST dedicado antes do upload | _[pending]_ |
-| TD-04 | Backend | Background Job Queue Technology | B — pg-boss (sobre Postgres, sem Redis) | _[pending]_ |
-| TD-05 | Repo-wide | Video Worker Subproject Placement & Compose Topology | B — Entrypoint adicional dentro de `nestjs-project/` | _[pending]_ |
-| TD-06 | Backend | Video Processing / FFmpeg Invocation Approach | A — `execa` + invocação direta de `ffmpeg`/`ffprobe` | _[pending]_ |
-| TD-07 | Cross-layer | Streaming & Download Delivery Mechanism | A — URLs assinadas direto do Object Storage | _[pending]_ |
-| TD-08 | Backend | Object Storage Key Strategy & Uniqueness Guarantee | A — Chave plana baseada no UUID do vídeo | _[pending]_ |
-| TD-09 | Backend | Video Processing Status Lifecycle & Failure Handling | A — Enum granular + retry/backoff/DLQ nativos do pg-boss | _[pending]_ |
+| TD-01 | Backend | Object Storage Backend & SDK | A — MinIO + `@aws-sdk/client-s3`/`lib-storage`/`s3-request-presigner` | A — `@aws-sdk/client-s3` (AWS SDK v3) + MinIO local via Docker Compose |
+| TD-02 | Cross-layer | Upload Protocol & Resumability | A — tus (`@tus/server` + `@tus/s3-store` + `tus-js-client`) | A — Protocolo tus (`@tus/server` + `@tus/s3-store` no backend, `tus-js-client` no frontend) |
+| TD-03 | Cross-layer | Draft Video Pre-registration Flow | B — Endpoint REST dedicado antes do upload | B — Endpoint REST dedicado antes de iniciar o upload |
+| TD-04 | Backend | Background Job Queue Technology | B — pg-boss (sobre Postgres, sem Redis) | B — pg-boss (fila sobre PostgreSQL) |
+| TD-05 | Repo-wide | Video Worker Subproject Placement & Compose Topology | B — Entrypoint adicional dentro de `nestjs-project/` | B — Entrypoint adicional dentro de `nestjs-project/` |
+| TD-06 | Backend | Video Processing / FFmpeg Invocation Approach | A — `execa` + invocação direta de `ffmpeg`/`ffprobe` | A — Invocação direta do binário via `child_process` (com `execa`) |
+| TD-07 | Cross-layer | Streaming & Download Delivery Mechanism | A — URLs assinadas direto do Object Storage | A — URLs assinadas (presigned GET) direto do Object Storage |
+| TD-08 | Backend | Object Storage Key Strategy & Uniqueness Guarantee | A — Chave plana baseada no UUID do vídeo | A — Chave plana baseada no UUID do vídeo |
+| TD-09 | Backend | Video Processing Status Lifecycle & Failure Handling | A — Enum granular + retry/backoff/DLQ nativos do pg-boss | A — Enum granular + retry automático do pg-boss + DLQ dedicada + artefatos parciais preservados |
