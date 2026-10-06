@@ -130,7 +130,7 @@ Deliver resumable video upload of up to 10GB without blocking the system, automa
 ### SI-03.5 — Endpoint POST /videos (Draft Creation)
 
 **Route:** POST /videos
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-draft.plan.md`
 **Authorization:** Owner (authenticated channel owner)
 
 **Description:** Implement the draft pre-registration endpoint — creates a Video row with `status: 'draft'` before any upload bytes arrive (per `phase-03-videos/TD-03`).
@@ -241,7 +241,7 @@ Deliver resumable video upload of up to 10GB without blocking the system, automa
 ### SI-03.9 — Endpoint GET /videos/{id} (Status + Delivery URLs)
 
 **Route:** GET /videos/{id}
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-status.plan.md`
 **Authorization:** Owner (authenticated channel owner)
 
 **Description:** Expose video status and, once processing succeeds, presigned streaming/download URLs (per `phase-03-videos/TD-07`, `TD-09`).
