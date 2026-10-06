@@ -4,9 +4,9 @@ name: phase-03-videos
 status: clean
 issue_count: 0
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-10-02T17:18:54-0300"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T17:11:36-0300"
-  docs/phases/phase-03-videos/library-refs.md: "2026-10-02T18:03:09-0300"
+  docs/phases/phase-03-videos/context.md: "2026-10-06T09:55:15-0300"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-10-02T18:11:10-0300"
+  docs/phases/phase-03-videos/library-refs.md: "2026-10-02T18:11:10-0300"
 issues:
   - id: OQ-1
     status: resolved
