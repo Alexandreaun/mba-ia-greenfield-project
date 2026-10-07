@@ -33,7 +33,10 @@ docker compose exec nestjs-api npm run start:dev
 
 Services:
 - `nestjs-api` — NestJS API, port `3000`
+- `nestjs-worker` — Video Worker (background job consumer, no HTTP port) — second NestJS bootstrap in this same codebase (`src/worker/main.ts`), started via `command: npx nest start --entryFile worker/main` in `compose.yaml`
 - `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
+- `minio` — S3-compatible object storage (video files + thumbnails), console on `9001`, API on `9000`
+- `mailpit` — SMTP capture for local email testing, UI on `8025`
 
 All verification and teardown commands run on the **host machine**:
 
@@ -78,6 +81,7 @@ npm run format                           # Prettier formatting
 ```bash
 docker compose ps
 docker compose logs nestjs-api
+docker compose logs nestjs-worker
 docker compose exec db pg_isready -U streamtube
 curl http://localhost:3000
 ```
@@ -124,6 +128,20 @@ These settings are required in `package.json` (jest config) and `test/jest-e2e.j
 
 Do not add new test-file suffixes; if a new test type is needed, update the regex deliberately.
 
+### Pure-ESM dependencies (`transformIgnorePatterns` / `moduleNameMapper`)
+
+Several runtime dependencies (`pg-boss`, `@tus/server`/`@tus/s3-store`, `execa`) ship as pure ESM with no CommonJS build. Jest's default `transformIgnorePatterns` excludes all of `node_modules`, so a static `import` of one of these packages fails with `SyntaxError: Cannot use import statement outside a module` unless the package (and every ESM package in its transitive import chain) is whitelisted in `package.json`'s jest config `transformIgnorePatterns`. Whitelisting is viral: tracing a new ESM dependency's chain (e.g. adding `execa` pulled in `@sindresorhus/merge-streams`, `figures`, `get-stream`, `human-signals`, `is-plain-obj`, `is-stream`, `npm-run-path`, `pretty-ms`, `strip-final-newline`, `which-command`, `yoctocolors`, `parse-ms`, `@sec-ant/readable-stream`, `is-unicode-supported`, and `path-key`) requires actually running the test and whitelisting each `SyntaxError`-reported package one at a time until it passes — do not try to guess the full chain upfront.
+
+A rarer, harder failure: some packages (e.g. `unicorn-magic`, a transitive dep of `execa` via `npm-run-path`) declare a package.json `exports` map with **only** `"import"` conditions at every leaf — there is no `require`-resolvable entry point at all, so even with transformIgnorePatterns whitelisting it, Jest's CJS resolver throws `Cannot find module` (a resolution failure, not a parse failure). The fix is a `moduleNameMapper` entry that redirects the bare specifier straight to the package's concrete ESM file, bypassing the exports-map resolution:
+
+```json
+"moduleNameMapper": {
+  "^unicorn-magic$": "<rootDir>/../node_modules/unicorn-magic/default.js"
+}
+```
+
+(`rootDir` is `src/` in this project's jest config, hence `../node_modules/...`.) Dynamic `import()` is **not** a viable workaround here — Jest's default (non-VM-modules) runtime throws `A dynamic import callback was invoked without --experimental-vm-modules`, and enabling that flag project-wide breaks the existing static `import` of already-whitelisted ESM packages like `pg-boss` (which rely on the transform-to-CJS workaround, not real ESM loading).
+
 ## Environment File Conventions
 
 `.env` is parsed by both Docker Compose and `dotenv` — values containing shell-special characters (`<`, `>`, `|`, `&`, spaces) **must be quoted** or rewritten:
@@ -142,12 +160,29 @@ Whenever possible, prefer storing only the bare address in `.env` and composing 
 
 `tsc` (and therefore `nest build`) only emits compiled `.ts` files to `dist/`. Any non-TypeScript runtime asset — Handlebars templates (`.hbs`), JSON fixtures, static config files, etc. — must be declared in `nest-cli.json` under `compilerOptions.assets` (with `watchAssets: true` for dev). Without that, the file exists in `src/` but is missing in `dist/` and runtime fails only after build.
 
+## System Dependencies (Dockerfile.dev)
+
+`Dockerfile.dev` installs `ffmpeg` (apt package) alongside `procps`/`curl` — it provides both the `ffmpeg` and `ffprobe` binaries the Video Worker invokes via `execa` to extract metadata and generate thumbnails. Both `nestjs-api` and `nestjs-worker` build from the same image, so a change here requires `docker compose build` (or `up --build`) for both services to pick it up.
+
 ## Architecture
 
 NestJS with standard module structure. Source lives in `src/`, compiled output in `dist/`.
 
 - Each domain feature gets its own module (e.g., `UsersModule`, `VideosModule`) registered in `AppModule`
 - Controllers handle HTTP routing; Services hold business logic; both are scoped to their module
+
+### Two application bootstraps
+
+This codebase ships **two** NestFactory entrypoints, sharing all entities/config/modules — not two subprojects:
+
+- `src/main.ts` → `AppModule`, `NestFactory.create()` + `app.listen()` — the HTTP API (`nestjs-api` service)
+- `src/worker/main.ts` → `WorkerModule`, `NestFactory.createApplicationContext()` — the background job consumer (`nestjs-worker` service), **no HTTP listener**. `WorkerModule` (`src/worker/worker.module.ts`) imports only the infra/domain modules the worker actually needs (`ConfigModule`, `TypeOrmModule`, `JobsModule`, `StorageModule`, `VideosModule`) plus a bare `TypeOrmModule.forFeature([User])` — it does not import `AuthModule`/`UploadsModule`/`UsersModule`, since the worker never handles HTTP requests or needs user business logic.
+- Job handlers (e.g. `VideoProcessingHandler` in `src/worker/video-processing.handler.ts`) register themselves against a queue via `JobsService.work()` inside their own `onModuleInit()` — they are plain providers in `WorkerModule`, not controllers.
+- When adding a new background job, extend `WorkerModule`'s imports/providers, not `AppModule`'s — keep the two bootstraps' dependency graphs independent so `nestjs-api` never needs queue-consumer code and `nestjs-worker` never needs route/guard code.
+
+**Gotcha — TypeORM relation metadata when extending `WorkerModule`'s imports:** if a module you add has an entity with a relation (`@OneToOne`, `@ManyToOne`, etc.) pointing to an entity that no module in `WorkerModule`'s import graph registers, `DataSource.initialize()` throws `Entity metadata for <Entity>#<field> was not found` — TypeORM requires every entity on *both* sides of a relation to be present in the same `DataSource`, even if the worker never queries that entity directly. Fix by adding a bare `TypeOrmModule.forFeature([TheRelatedEntity])` to `WorkerModule` (entity registration only — don't pull in the whole owning module and its services/controllers). Example: adding `VideosModule` pulled in `ChannelsModule` → `Channel`, whose `user` field is a `@OneToOne(() => User, ...)` — `User` had to be registered the same way even though the worker never reads `User` rows.
+
+**Gotcha — testing a bootstrap via `NestFactory.createApplicationContext()`/`create()` directly:** always pass `abortOnError: false`. The default (`true`) calls `process.exit(1)` synchronously on *any* bootstrap error instead of rejecting the returned promise — inside a Jest test this kills the whole worker process, which Jest's parent then reports as a misleading `"Exceeded timeout of Xms"` rather than the real error. This only applies when bootstrapping via raw `NestFactory` (as `worker-bootstrap.integration-spec.ts` does, to exercise the real production entrypoint) — `Test.createTestingModule()`-based tests aren't affected.
 
 ## Code Conventions
 

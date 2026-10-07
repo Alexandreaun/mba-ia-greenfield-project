@@ -10,7 +10,7 @@ More info in the project overview: [docs/project-plan.md](docs/project-plan.md)
 
 This is a monorepo with two main areas:
 
-- `nestjs-project/` — Backend API (NestJS 11, TypeScript, Express). Contains modules for users, channels, videos, comments, etc.
+- `nestjs-project/` — Backend API (NestJS 11, TypeScript, Express). Contains modules for users, channels, auth, videos, uploads, storage, jobs, comments, etc. Also hosts the Video Worker as a second bootstrap (`src/worker/`) within the same codebase (see Architecture below).
 - `docs/` — Project documentation, architecture diagrams, and planning.
 - `next-frontend/` (Next.js) — not yet initialized
 
@@ -18,12 +18,12 @@ This is a monorepo with two main areas:
 
 See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
 
-- **Frontend** (Next.js) → calls API via REST, streams from Object Storage
-- **API** (Nest.js) → business rules, auth, reads/writes DB, uploads to storage, publishes jobs to queue, sends emails
-- **Video Worker** (FFmpeg) → consumes jobs from queue, processes videos, updates DB and storage
+- **Frontend** (Next.js) → calls API via REST, streams/downloads directly from Object Storage via presigned URLs
+- **API** (Nest.js) → business rules, auth, reads/writes DB, accepts resumable video uploads (tus protocol via `@tus/server` + `@tus/s3-store`), publishes processing jobs to the queue, sends emails
+- **Video Worker** (FFmpeg) → implemented as a second NestJS bootstrap inside `nestjs-project` (`src/worker/main.ts`, `NestFactory.createApplicationContext()`, no HTTP listener — runs as the `nestjs-worker` Compose service per TD-05 of `phase-03-videos`, reusing the API's entities/config instead of a separate subproject). Consumes `video.process` jobs, extracts metadata via `ffprobe` and generates a thumbnail via `ffmpeg` (both invoked directly through `execa`, per TD-06), updates DB and storage
 - **Database** (PostgreSQL) → users, channels, videos, comments, likes
-- **Object Storage** (S3/MinIO) → video files and thumbnails
-- **Message Queue** (TBD) → video processing job queue
+- **Object Storage** (S3/MinIO) → video files and thumbnails, via `@aws-sdk/client-s3` (MinIO locally in Docker Compose, S3-compatible in prod); delivery uses short-lived presigned GET URLs (`@aws-sdk/s3-request-presigner`) for both streaming and `Content-Disposition: attachment` downloads
+- **Message Queue** (pg-boss, over PostgreSQL — no separate broker) → video processing job queue, with built-in retry/backoff and a dedicated dead-letter queue (`video-processing-dlq`)
 - **Email Service** (SMTP) → account confirmation and password recovery
 
 ## Docker Networking
