@@ -18,7 +18,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:integration": "jest --runInBand --testRegex=\"\\.integration-spec\\.ts$\"",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "npm run typeorm -- migration:run -d src/database/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d src/database/data-source.ts",
@@ -28,6 +28,9 @@
     "openapi:export": "ts-node -r tsconfig-paths/register src/openapi-export.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1146.0",
+    "@aws-sdk/lib-storage": "^3.1146.0",
+    "@aws-sdk/s3-request-presigner": "^3.1146.0",
     "@nestjs-modules/mailer": "^2.3.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
@@ -37,17 +40,24 @@
     "@nestjs/swagger": "^11.4.2",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.1",
+    "@tus/s3-store": "^2.0.7",
+    "@tus/server": "^2.4.5",
     "argon2": "^0.41.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
+    "execa": "^10.0.1",
+    "express": "^5.2.1",
     "handlebars": "^4.7.9",
     "joi": "^18.1.2",
     "pg": "^8.20.0",
+    "pg-boss": "^12.37.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.28"
   },
   "devDependencies": {
+    "@babel/core": "^8.0.6",
+    "@babel/plugin-transform-modules-commonjs": "^8.0.1",
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
     "@nestjs/cli": "^11.0.0",
@@ -57,6 +67,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
     "@types/supertest": "^6.0.2",
+    "babel-jest": "^30.5.2",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
@@ -75,13 +86,25 @@
   "jest": {
     "moduleFileExtensions": [
       "js",
+      "mjs",
+      "cjs",
       "json",
       "ts"
     ],
     "rootDir": "src",
     "testRegex": ".*\\.(spec|integration-spec)\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": "ts-jest",
+      "^.+\\.[mc]js$": [
+        "babel-jest",
+        { "plugins": ["@babel/plugin-transform-modules-commonjs"] }
+      ]
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!pg-boss|serialize-error|non-error|rrule-temporal|temporal-spec|@tus|srvx|execa|@sindresorhus/merge-streams|figures|get-stream|human-signals|is-plain-obj|is-stream|npm-run-path|pretty-ms|strip-final-newline|which-command|yoctocolors|parse-ms|unicorn-magic|@sec-ant/readable-stream|is-unicode-supported|path-key)"
+    ],
+    "moduleNameMapper": {
+      "^unicorn-magic$": "<rootDir>/../node_modules/unicorn-magic/default.js"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
