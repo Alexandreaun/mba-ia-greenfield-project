@@ -5,6 +5,7 @@ import databaseConfig from '../config/database.config';
 import storageConfig from '../config/storage.config';
 import { JobsModule } from '../jobs/jobs.module';
 import { StorageModule } from '../storage/storage.module';
+import { User } from '../users/entities/user.entity';
 import { VideosModule } from '../videos/videos.module';
 import { VideoProcessingHandler } from './video-processing.handler';
 
@@ -28,6 +29,10 @@ import { VideoProcessingHandler } from './video-processing.handler';
         synchronize: false,
       }),
     }),
+    // Channel.user is a @OneToOne(() => User, ...) relation — TypeORM
+    // requires the related entity's metadata to be present in the same
+    // DataSource even though the worker never queries User rows directly.
+    TypeOrmModule.forFeature([User]),
     JobsModule,
     StorageModule,
     VideosModule,

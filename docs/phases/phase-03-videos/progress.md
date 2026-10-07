@@ -1,6 +1,6 @@
 # phase-03-videos — Progress
 
-**Status:** in_progress
+**Status:** completed
 **SIs:** 9/9 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespace, and Docker Compose
@@ -81,3 +81,22 @@
   - `VideosController.findOne` mirrors `create()`'s existing (pre-existing, not introduced here) pattern of resolving the caller's channel via `ChannelsService.findByUserId` and throwing a plain `Error` if no channel exists — left as-is for consistency within the same controller rather than fixing in this SI's new method only.
   - The e2e spec (`test/videos-status.e2e-spec.ts`, authored from `nestjs-project/specs/videos-status.plan.md` per the modern Test Specs flow) seeds `Video` rows directly via the repository rather than driving them through the real upload/processing flow, per the spec's own `Setup:` field.
   - Pre-existing lint debt (same `no-unsafe-*`/`require-await` pattern already flagged in SI-03.6's observations for `auth.e2e-spec.ts`/`uploads.e2e-spec.ts`/`videos-draft.e2e-spec.ts`) also appears in the new `videos-status.e2e-spec.ts` — left untouched, consistent with treating it as a project-wide gap outside this SI's scope.
+
+## Final Verification
+
+- **Unit + integration tests:** 171/171 passing (31 suites) — `docker compose exec nestjs-api npm test -- --runInBand`.
+- **E2E tests:** 61/61 passing (6 suites) — `docker compose exec nestjs-api npm run test:e2e`.
+- **Type-check:** clean — `docker compose exec nestjs-api npx tsc --noEmit`.
+- **Lint:** 192 pre-existing errors (40 warnings), none introduced by phase-03-videos — see note below. User decision: mark the phase complete with this as a documented, non-blocking caveat.
+
+**Bug found and fixed during final verification (not caught by any individual SI's own test run):**
+- `src/worker/worker-bootstrap.integration-spec.ts` (SI-03.7) was crashing the *entire* `npm test` process rather than just failing its own test. `NestFactory.createApplicationContext()` defaults `abortOnError: true`, which calls `process.exit(1)` directly on any bootstrap error instead of rejecting the returned promise — so when the suite was run file-by-file in isolation during SI-03.7/SI-03.8, it always passed, but running the *full* suite together surfaced a real error that `process.exit` then disguised as a Jest-level timeout (Jest's parent process, waiting on a child that had just been killed, reported "Exceeded timeout of 5000ms").
+- The actual underlying error was a genuine, deterministic bug introduced in SI-03.8: extending `WorkerModule`'s imports to include `VideosModule` transitively pulled in `ChannelsModule` → `Channel` entity, whose `user` field is a `@OneToOne(() => User, ...)` relation — but `User`'s entity metadata was never registered anywhere in `WorkerModule`'s import graph, so TypeORM's `DataSource.initialize()` threw `Entity metadata for Channel#user was not found`. This never surfaced during SI-03.8's own test (`video-processing.handler.integration-spec.ts` uses a hand-curated `Test.createTestingModule()` with its own entity list, not the real `WorkerModule`) — only `worker-bootstrap.integration-spec.ts` boots the real `WorkerModule`, and it was last verified *before* SI-03.8 added those imports.
+- Fixed by adding `TypeOrmModule.forFeature([User])` directly to `WorkerModule` (entity-metadata-only, no `UsersService`/`UsersModule` pulled in — the worker still doesn't need user business logic) and `abortOnError: false` + a 15000ms timeout on the test (so any *future* bootstrap regression fails loudly with a real error instead of silently killing the process). Re-verified clean: both files pass in isolation and the full 171-test suite now completes end-to-end.
+- **Lesson for future phases:** when a later SI extends a module (`WorkerModule`, `AppModule`, etc.) that an earlier SI already has a passing bootstrap/compilation test for, re-run that earlier test after the extension — its own SI loop won't catch regressions introduced by a *later* SI touching the same module.
+
+**Lint — 192 pre-existing errors, not a phase-03 regression:** every error is the same `@typescript-eslint/no-unsafe-*` / `unbound-method` / `require-await` family already flagged twice in this file (SI-03.6, SI-03.9), spread across files phase-03 never touched functionally: `auth.service.spec.ts`, `auth.service.integration-spec.ts`, `channels.service.ts`, `channels.service.spec.ts`, `mail.service.integration-spec.ts`, `domain-exception.filter.spec.ts`, `validation-exception.filter.spec.ts`, `env.validation.integration-spec.ts`, `create-test-data-source.ts`, `users.service.integration-spec.ts`, `jobs.service.integration-spec.ts`, plus the project's own `*.e2e-spec.ts` files (all of them, including the two new ones from this phase, follow the same pre-existing pattern). This is baseline project debt predating phase-03-videos — recommend a dedicated cleanup task rather than folding it into a future phase's scope.
+
+**Other recommended follow-up tasks (carried over from SI observations above, not actioned in this phase):**
+- Add `"videos"` to `migrations.integration-spec.ts`'s `MANAGED_TABLES` (SI-03.8 observation) — its DROP/recreate cycle can orphan a `videos` row's `channel_id` if it runs after a video-creating integration test in the same full-suite invocation.
+- Decide whether `VideoStatus.PROCESSING` should actually be set by `VideoProcessingHandler` at job start (SI-03.8 observation) — it's currently a dead enum value with no code path that sets it.
