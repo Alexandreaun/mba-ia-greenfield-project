@@ -4,7 +4,10 @@ import type { ConfigType } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { BEARER_PREFIX } from '../auth/auth.constants';
 import type { JwtPayload } from '../auth/auth.types';
-import { DomainException } from '../common/exceptions/domain.exception';
+import {
+  DomainException,
+  VideoNotFoundException,
+} from '../common/exceptions/domain.exception';
 import storageConfig from '../config/storage.config';
 import { UploadsService } from './uploads.service';
 
@@ -84,12 +87,12 @@ export function createTusServer(
   return new Server({
     path: '/uploads',
     datastore: s3Store,
-    async onIncomingRequest(req) {
-      await authenticate(req);
-    },
-    async onUploadCreate(req, upload) {
-      const user = await authenticate(req);
-      const videoId = upload.metadata?.videoId;
+    // The object's S3 key must match `Video.object_key` (per
+    // phase-03-videos/TD-08) so the worker and presigned-URL generator can
+    // find it later — @tus/s3-store otherwise defaults to a random id, which
+    // is never coordinated with the rest of the system.
+    async namingFunction(_req, metadata) {
+      const videoId = metadata?.videoId;
       if (!videoId) {
         throw new TusError(
           400,
@@ -100,6 +103,20 @@ export function createTusServer(
           }),
         );
       }
+
+      const objectKey = await uploadsService.getObjectKey(videoId);
+      if (!objectKey) {
+        throw toTusError(new VideoNotFoundException());
+      }
+
+      return objectKey;
+    },
+    async onIncomingRequest(req) {
+      await authenticate(req);
+    },
+    async onUploadCreate(req, upload) {
+      const user = await authenticate(req);
+      const videoId = upload.metadata?.videoId as string;
 
       try {
         await uploadsService.assertOwnedDraft(videoId, user.sub);

@@ -28,6 +28,11 @@ export class UploadsService {
     return video;
   }
 
+  async getObjectKey(videoId: string): Promise<string | null> {
+    const video = await this.videosService.findById(videoId);
+    return video?.object_key ?? null;
+  }
+
   async completeUpload(videoId: string): Promise<void> {
     const video = await this.videosService.findById(videoId);
     if (!video) {
